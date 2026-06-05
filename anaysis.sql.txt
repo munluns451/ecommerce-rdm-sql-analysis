@@ -1,0 +1,181 @@
+-- E-Commerce RFM Customer Segmentation Analysis
+-- Munna Naharki | github.com/munluns451
+-- Dataset: Online Retail Transactions (541,909 rows)
+-- Tools: SQL, SQLite, DB Browser
+
+-- ============================================
+-- QUERY 1: Basic Customer Summary
+-- ============================================
+-- Purpose: Understand dataset scope
+SELECT 
+    COUNT(*) AS total_rows,
+    COUNT(DISTINCT CustomerID) AS unique_customers,
+    COUNT(DISTINCT InvoiceNo) AS unique_orders,
+    MIN(InvoiceDate) AS first_order,
+    MAX(InvoiceDate) AS last_order
+FROM orders
+WHERE CustomerID != '';
+
+-- ============================================
+-- QUERY 2: Revenue Per Transaction
+-- ============================================
+-- Purpose: Calculate revenue for each row
+-- Quantity x UnitPrice = revenue per line item
+SELECT
+    CustomerID,
+    InvoiceNo,
+    Quantity * UnitPrice AS revenue
+FROM orders
+WHERE CustomerID != ''
+AND Quantity > 0
+LIMIT 10;
+
+-- ============================================
+-- QUERY 3: Customer Level Summary
+-- ============================================
+-- Purpose: Aggregate data to one row per customer
+-- Shows total spend, order count and last purchase
+SELECT
+    CustomerID,
+    SUM(Quantity * UnitPrice) AS total_spent,
+    COUNT(DISTINCT InvoiceNo) AS number_of_orders,
+    MAX(InvoiceDate) AS last_purchase_date
+FROM orders
+WHERE CustomerID != ''
+AND Quantity > 0
+GROUP BY CustomerID
+LIMIT 10;
+
+-- ============================================
+-- QUERY 4: Full RFM Scoring with CTEs
+-- ============================================
+-- Purpose: Score every customer 1-5 on Recency,
+-- Frequency and Monetary value
+-- Uses TWO CTEs and a subquery
+
+WITH customer_summary AS (
+    SELECT
+        CustomerID,
+        ROUND(SUM(Quantity * UnitPrice), 2) AS total_spent,
+        COUNT(DISTINCT InvoiceNo) AS number_of_orders,
+        ROUND(JULIANDAY('2011-12-09') - JULIANDAY(MAX(InvoiceDate)), 0) AS recency_days
+    FROM orders
+    WHERE CustomerID != ''
+    AND Quantity > 0
+    GROUP BY CustomerID
+),
+rfm_scores AS (
+    SELECT
+        CustomerID,
+        total_spent,
+        number_of_orders,
+        recency_days,
+        CASE
+            WHEN recency_days <= 30 THEN 5
+            WHEN recency_days <= 90 THEN 4
+            WHEN recency_days <= 180 THEN 3
+            WHEN recency_days <= 270 THEN 2
+            ELSE 1
+        END AS recency_score,
+        CASE
+            WHEN number_of_orders >= 10 THEN 5
+            WHEN number_of_orders >= 6 THEN 4
+            WHEN number_of_orders >= 3 THEN 3
+            WHEN number_of_orders >= 2 THEN 2
+            ELSE 1
+        END AS frequency_score,
+        CASE
+            WHEN total_spent >= 5000 THEN 5
+            WHEN total_spent >= 1000 THEN 4
+            WHEN total_spent >= 500 THEN 3
+            WHEN total_spent >= 100 THEN 2
+            ELSE 1
+        END AS monetary_score
+    FROM customer_summary
+)
+SELECT
+    CustomerID,
+    total_spent,
+    number_of_orders,
+    recency_days,
+    recency_score,
+    frequency_score,
+    monetary_score,
+    recency_score + frequency_score + monetary_score AS rfm_total,
+    CASE
+        WHEN recency_score + frequency_score + monetary_score >= 13 THEN 'Champion'
+        WHEN recency_score + frequency_score + monetary_score >= 10 THEN 'Loyal Customer'
+        WHEN recency_score + frequency_score + monetary_score >= 7 THEN 'Potential Loyal'
+        WHEN recency_score + frequency_score + monetary_score >= 5 THEN 'At Risk'
+        ELSE 'Lost'
+    END AS customer_segment
+FROM rfm_scores
+ORDER BY rfm_total DESC;
+
+-- ============================================
+-- QUERY 5: Customer Segment Summary
+-- ============================================
+-- Purpose: Count customers in each segment
+-- Shows average spend and orders per segment
+
+WITH customer_summary AS (
+    SELECT
+        CustomerID,
+        ROUND(SUM(Quantity * UnitPrice), 2) AS total_spent,
+        COUNT(DISTINCT InvoiceNo) AS number_of_orders,
+        ROUND(JULIANDAY('2011-12-09') - JULIANDAY(MAX(InvoiceDate)), 0) AS recency_days
+    FROM orders
+    WHERE CustomerID != ''
+    AND Quantity > 0
+    GROUP BY CustomerID
+),
+rfm_scores AS (
+    SELECT
+        CustomerID,
+        total_spent,
+        number_of_orders,
+        recency_days,
+        CASE
+            WHEN recency_days <= 30 THEN 5
+            WHEN recency_days <= 90 THEN 4
+            WHEN recency_days <= 180 THEN 3
+            WHEN recency_days <= 270 THEN 2
+            ELSE 1
+        END AS recency_score,
+        CASE
+            WHEN number_of_orders >= 10 THEN 5
+            WHEN number_of_orders >= 6 THEN 4
+            WHEN number_of_orders >= 3 THEN 3
+            WHEN number_of_orders >= 2 THEN 2
+            ELSE 1
+        END AS frequency_score,
+        CASE
+            WHEN total_spent >= 5000 THEN 5
+            WHEN total_spent >= 1000 THEN 4
+            WHEN total_spent >= 500 THEN 3
+            WHEN total_spent >= 100 THEN 2
+            ELSE 1
+        END AS monetary_score
+    FROM customer_summary
+)
+SELECT
+    customer_segment,
+    COUNT(CustomerID) AS customer_count,
+    ROUND(AVG(total_spent), 2) AS avg_spent,
+    ROUND(AVG(number_of_orders), 1) AS avg_orders
+FROM (
+    SELECT
+        CustomerID,
+        total_spent,
+        number_of_orders,
+        CASE
+            WHEN recency_score + frequency_score + monetary_score >= 13 THEN 'Champion'
+            WHEN recency_score + frequency_score + monetary_score >= 10 THEN 'Loyal Customer'
+            WHEN recency_score + frequency_score + monetary_score >= 7 THEN 'Potential Loyal'
+            WHEN recency_score + frequency_score + monetary_score >= 5 THEN 'At Risk'
+            ELSE 'Lost'
+        END AS customer_segment
+    FROM rfm_scores
+)
+GROUP BY customer_segment
+ORDER BY avg_spent DESC;
